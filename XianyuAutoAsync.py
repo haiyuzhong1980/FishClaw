@@ -9059,6 +9059,24 @@ Cookie数量: {cookie_count}
                     logger.error(f"订单状态处理失败: {self._safe_str(e)}")
 
             # 【优先处理】检查系统消息和自动发货触发消息（不受人工接入暂停影响）
+            ignore_keywords = [
+                '不想宝贝被砍价',
+                'AI正在帮你回复',
+                '发来一条',              # 匹配 '发来一条消息' 和 '发来一条新消息'
+                '确认收货，交易成功',     # 匹配 '[买家确认收货，交易成功]' 和 '[你已确认收货，交易成功]'
+                '闲鱼小红花',            # 匹配 '卖家人不错？送Ta闲鱼小红花' 和 '你人真不错，送你闲鱼小红花'
+                '已发货',                # 匹配 '[你已发货]' 和 '已发货'
+                '小心假客服骗钱',
+                '「我将「退货退款」修改为「退款」」',
+                '订单已签收',
+                '蚂蚁森林能量',
+                '订单即将自动确认收货',
+                '我完成了评价',
+                '创建合约',
+                '恭喜你拿到曝光卡',
+                '退款成功，钱款已原路退返',
+                '宝贝性价比如何，去表个态吧'
+            ]
             if send_message == '[我已拍下，待付款]':
                 logger.info(f'[{msg_time}] 【{self.cookie_id}】[{msg_id}] 系统消息不处理')
                 logger.info(f"【{self.cookie_id}】[{msg_id}] ⏹️ 处理结束（系统消息：待付款）")
@@ -9076,22 +9094,7 @@ Cookie数量: {cookie_count}
                 await self.handle_auto_comment(message, msg_time, msg_id)
                 logger.info(f"【{self.cookie_id}】[{msg_id}] ⏹️ 处理结束（评价提醒消息）")
                 return
-            elif send_message in [
-                '[不想宝贝被砍价?设置不砍价回复  ]',
-                'AI正在帮你回复消息，不错过每笔订单',
-                '发来一条消息',
-                '发来一条新消息',
-                '[买家确认收货，交易成功]',
-                '卖家人不错？送Ta闲鱼小红花',
-                '你人真不错，送你闲鱼小红花',
-                '[你已确认收货，交易成功]',
-                '[你已发货]',
-                '已发货',
-                '[注意！小心假客服骗钱！]',
-                '「我将「退货退款」修改为「退款」」',
-                '订单已签收',
-                '有蚂蚁森林能量可领'
-            ]:
+            elif any(keyword in send_message for keyword in ignore_keywords):
                 logger.info(f'[{msg_time}] 【{self.cookie_id}】[{msg_id}] ⏹️ 系统消息不处理: {send_message}')
                 return
             # 简化消息通过 sid 查找订单，更可靠
