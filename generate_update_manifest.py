@@ -95,6 +95,22 @@ def read_version(base_dir: Path, fallback: str = "v1.0.0") -> str:
     return fallback
 
 
+def read_repo_config() -> tuple[str, str]:
+    """读取 GitHub 仓库配置，优先环境变量，其次默认值"""
+    owner = os.environ.get("UPDATE_GITHUB_OWNER", "").strip()
+    repo = os.environ.get("UPDATE_GITHUB_REPO", "").strip()
+    if owner and repo:
+        return owner, repo
+
+    repository = os.environ.get("GITHUB_REPOSITORY", "").strip()
+    if repository and "/" in repository:
+        repo_owner, repo_name = repository.split("/", 1)
+        if repo_owner and repo_name:
+            return repo_owner, repo_name
+
+    return DEFAULT_GITHUB_OWNER, DEFAULT_GITHUB_REPO
+
+
 def generate_manifest(
     base_dir: Path,
     version: str = "v1.0.0",
@@ -165,8 +181,7 @@ def main():
     if len(sys.argv) > 2:
         version = sys.argv[2]
 
-    owner = DEFAULT_GITHUB_OWNER
-    repo = DEFAULT_GITHUB_REPO
+    owner, repo = read_repo_config()
     if len(sys.argv) > 3:
         owner = sys.argv[3]
     if len(sys.argv) > 4:
@@ -194,7 +209,7 @@ def main():
     print("""
 1. 将当前版本代码提交并打上 Git tag（如 v1.5.0）
 2. 发布 GitHub Release，并确保对应 tag 已存在
-3. 将 update_files.json 一并提交到仓库，使其可通过 tag 的 raw 地址访问
+3. 生成的 update_files.json 会上传到 GitHub Release 作为更新清单
 4. 用户在前端点击"一键热更新"后，会先读取 GitHub Releases 最新版本，再从对应 tag 下载文件
 """)
 

@@ -33,8 +33,8 @@
     },
     {
       "path": "auto_updater.py",
-      "md5": "b32f3f9b1cc96b948214718b398b5f2b",
-      "size": 31969,
+      "md5": "a6ccbc83d464fda7c450353bff7163d1",
+      "size": 32892,
       "download_url": "https://raw.githubusercontent.com/GuDong2003/xianyu-auto-reply-fix/v1.5.1/auto_updater.py",
       "requires_restart": true,
       "description": ""

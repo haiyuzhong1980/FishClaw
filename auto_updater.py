@@ -187,6 +187,26 @@ class AutoUpdater:
         ext = Path(file_path).suffix.lower()
         return ext in self.RESTART_REQUIRED_EXTENSIONS
 
+    def refresh_current_version(self) -> str:
+        """从本地版本文件刷新当前版本号，避免长生命周期进程读到旧版本"""
+        version = self.current_version or "1.0.0"
+        version_file = self.app_dir / "static" / "version.txt"
+
+        try:
+            if version_file.exists():
+                file_version = version_file.read_text(encoding="utf-8").strip()
+                if file_version:
+                    version = file_version
+        except Exception as e:
+            logger.warning(f"读取本地版本文件失败，继续使用缓存版本: {e}")
+            return self.current_version
+
+        if version != self.current_version:
+            logger.info(f"检测到本地版本变更: {self.current_version} -> {version}")
+            self.current_version = version
+
+        return self.current_version
+
     def _build_request_headers(self, accept_json: bool = True) -> Dict[str, str]:
         """构建 GitHub 请求头"""
         headers = {
@@ -243,6 +263,7 @@ class AutoUpdater:
         Returns:
             UpdateManifest: 更新清单，如果没有更新则返回None
         """
+        self.refresh_current_version()
         self._update_progress(status=UpdateStatus.CHECKING, message="正在检查更新...")
         
         try:
@@ -546,6 +567,7 @@ class AutoUpdater:
         }
         
         try:
+            self.refresh_current_version()
             # 检查更新
             if manifest is None:
                 manifest = await self.check_for_updates()

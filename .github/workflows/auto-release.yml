@@ -11,12 +11,20 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      UPDATE_GITHUB_OWNER: ${{ github.repository_owner }}
+      UPDATE_GITHUB_REPO: ${{ github.event.repository.name }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
       - name: Read version
         id: version
@@ -40,6 +48,12 @@ jobs:
           else
             echo "release_exists=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Generate update manifest
+        if: steps.exists.outputs.release_exists != 'true'
+        shell: bash
+        run: |
+          python3 generate_update_manifest.py .
 
       - name: Create tag and release
         if: steps.exists.outputs.release_exists != 'true'
