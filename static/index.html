@@ -3201,7 +3201,6 @@
               <select class="form-select" id="cardType" onchange="toggleCardTypeFields()" required>
                 <option value="">请选择类型</option>
                 <option value="api">API接口</option>
-                <option value="yifan_api">亦凡API</option>
                 <option value="text">固定文字</option>
                 <option value="data">批量数据</option>
                 <option value="image">图片</option>
@@ -3302,53 +3301,6 @@
                       </div>
                     </div>
                   </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- 亦凡API配置 -->
-            <div id="yifanApiFields" class="card mb-3" style="display: none;">
-              <div class="card-header">
-                <h6 class="mb-0">亦凡API配置</h6>
-              </div>
-              <div class="card-body">
-                <div class="mb-3">
-                  <label class="form-label">商户ID <span class="text-danger">*</span></label>
-                  <input type="text" class="form-control" id="yifanUserId" placeholder="请输入商户ID">
-                  <small class="form-text text-muted">由亦凡平台提供的商户ID</small>
-                </div>
-                <div class="mb-3">
-                  <label class="form-label">商户KEY <span class="text-danger">*</span></label>
-                  <input type="text" class="form-control" id="yifanUserKey" placeholder="请输入商户KEY">
-                  <small class="form-text text-muted">由亦凡平台提供的商户密钥，在会员中心-对接信息里面查看</small>
-                </div>
-                <div class="mb-3">
-                  <label class="form-label">商品ID <span class="text-danger">*</span></label>
-                  <input type="text" class="form-control" id="yifanGoodsId" placeholder="请输入商品ID">
-                  <small class="form-text text-muted">由亦凡平台提供的商品ID</small>
-                </div>
-                <div class="mb-3">
-                  <label class="form-label">回调地址</label>
-                  <input type="url" class="form-control" id="yifanCallbackUrl" placeholder="http://116.196.116.76/yifan.php">
-                  <small class="form-text text-muted">订单状态回调通知地址（选填，留空使用我自己搭建的回调地址，有条件的可以参考亦凡API文档自己搭建回调地址）</small>
-                </div>
-                <div class="mb-3">
-                  <div class="form-check form-switch">
-                    <input class="form-check-input" type="checkbox" id="yifanRequireAccount">
-                    <label class="form-check-label" for="yifanRequireAccount">
-                      <strong>需要充值账号</strong>
-                    </label>
-                  </div>
-                  <small class="form-text text-muted">
-                    <i class="bi bi-info-circle me-1"></i>
-                    开启后，系统会在发货前询问客户充值账号，客户确认后才会下单
-                  </small>
-                </div>
-                <div class="alert alert-info mb-0">
-                  <small>
-                    <i class="bi bi-lightbulb me-1"></i>
-                    <strong>使用说明：</strong>亦凡API用于自动发货卡劵类商品。配置完成后，系统会自动调用亦凡API进行下单和发货。
-                  </small>
                 </div>
               </div>
             </div>
@@ -3527,7 +3479,6 @@
               <label class="form-label">卡券类型 <span class="text-danger">*</span></label>
               <select class="form-select" id="editCardType" onchange="toggleEditCardTypeFields()" required>
                 <option value="api">API接口</option>
-                <option value="yifan_api">亦凡API</option>
                 <option value="text">固定文字</option>
                 <option value="data">批量数据</option>
                 <option value="image">图片</option>
@@ -3628,53 +3579,6 @@
                       </div>
                     </div>
                   </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- 亦凡API配置 -->
-            <div id="editYifanApiFields" class="card mb-3" style="display: none;">
-              <div class="card-header">
-                <h6 class="mb-0">亦凡API配置</h6>
-              </div>
-              <div class="card-body">
-                <div class="mb-3">
-                  <label class="form-label">商户ID <span class="text-danger">*</span></label>
-                  <input type="text" class="form-control" id="editYifanUserId" placeholder="请输入商户ID">
-                  <small class="form-text text-muted">由亦凡平台提供的商户ID</small>
-                </div>
-                <div class="mb-3">
-                  <label class="form-label">商户KEY <span class="text-danger">*</span></label>
-                  <input type="text" class="form-control" id="editYifanUserKey" placeholder="请输入商户KEY">
-                  <small class="form-text text-muted">由亦凡平台提供的商户密钥，在会员中心-对接信息里面查看</small>
-                </div>
-                <div class="mb-3">
-                  <label class="form-label">商品ID <span class="text-danger">*</span></label>
-                  <input type="text" class="form-control" id="editYifanGoodsId" placeholder="请输入商品ID">
-                  <small class="form-text text-muted">由亦凡平台提供的商品ID</small>
-                </div>
-                <div class="mb-3">
-                  <label class="form-label">回调地址</label>
-                  <input type="url" class="form-control" id="editYifanCallbackUrl" placeholder="http://116.196.116.76/yifan.php">
-                  <small class="form-text text-muted">订单状态回调通知地址（选填，留空使用我自己搭建的回调地址，有条件的可以参考亦凡API文档自己搭建回调地址）</small>
-                </div>
-                <div class="mb-3">
-                  <div class="form-check form-switch">
-                    <input class="form-check-input" type="checkbox" id="editYifanRequireAccount">
-                    <label class="form-check-label" for="editYifanRequireAccount">
-                      <strong>需要充值账号</strong>
-                    </label>
-                  </div>
-                  <small class="form-text text-muted">
-                    <i class="bi bi-info-circle me-1"></i>
-                    开启后，系统会在发货前询问客户充值账号，客户确认后才会下单
-                  </small>
-                </div>
-                <div class="alert alert-info mb-0">
-                  <small>
-                    <i class="bi bi-lightbulb me-1"></i>
-                    <strong>使用说明：</strong>亦凡API用于自动发货卡劵类商品。配置完成后，系统会自动调用亦凡API进行下单和发货。
-                  </small>
                 </div>
               </div>
             </div>

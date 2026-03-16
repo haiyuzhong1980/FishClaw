@@ -18,6 +18,8 @@ import io
 import asyncio
 import queue
 from collections import defaultdict
+from datetime import datetime, timedelta
+import jwt
 
 import cookie_manager
 from db_manager import db_manager
@@ -38,14 +40,25 @@ except ImportError:
     logger.warning("⚠️ api_captcha_remote 未找到，刮刮乐远程控制功能不可用")
     CAPTCHA_ROUTER_AVAILABLE = False
 
+
+# JWT配置 - 安全修复：强制使用环境变量配置
+JWT_SECRET_KEY = os.getenv('JWT_SECRET_KEY', '').strip()
+if not JWT_SECRET_KEY:
+    logger.error("❌ 安全配置错误：JWT_SECRET_KEY 环境变量未设置")
+    logger.error("请设置环境变量：export JWT_SECRET_KEY=$(python -c \"import secrets; print(secrets.token_urlsafe(32))\")")
+    raise ValueError("JWT_SECRET_KEY 环境变量必须设置")
+
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRE_HOURS = int(os.getenv('JWT_EXPIRE_HOURS', '4'))  # 安全修复：默认4小时，可配置
+JWT_REFRESH_EXPIRE_DAYS = int(os.getenv('JWT_REFRESH_EXPIRE_DAYS', '7'))  # Refresh token有效期
+
+# Session token storage
+SESSION_TOKENS = {}  # 内存缓存
+
 # 关键字文件路径
 KEYWORDS_FILE = Path(__file__).parent / "回复关键字.txt"
 
-# 简单的用户认证配置
-ADMIN_USERNAME = "admin"
-DEFAULT_ADMIN_PASSWORD = "admin123"  # 系统初始化时的默认密码
-SESSION_TOKENS = {}  # 存储会话token: {token: {'user_id': int, 'username': str, 'timestamp': float}}
-TOKEN_EXPIRE_TIME = 24 * 60 * 60  # token过期时间：24小时
+# 已移除旧session token配置 - 现在使用JWT（见顶部配置）
 
 # HTTP Bearer认证
 security = HTTPBearer(auto_error=False)
@@ -560,28 +573,91 @@ class VerifyCaptchaResponse(BaseModel):
     message: str
 
 
-def generate_token() -> str:
-    """生成随机token"""
-    return secrets.token_urlsafe(32)
+# ==================== JWT Token函数 ====================
+
+
+def create_jwt_token(user_id: int, username: str, is_admin: bool = False) -> Tuple[str, str]:
+    """创建JWT access token和refresh token"""
+    current_time = time.time()
+    
+    # Access token
+    access_payload = {
+        'user_id': user_id,
+        'username': username,
+        'is_admin': is_admin,
+        'type': 'access',
+        'iat': current_time,
+        'exp': current_time + JWT_EXPIRE_HOURS * 3600
+    }
+    access_token = jwt.encode(access_payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+    
+    # Refresh token
+    refresh_payload = {
+        'user_id': user_id,
+        'username': username,
+        'type': 'refresh',
+        'iat': current_time,
+        'exp': current_time + JWT_REFRESH_EXPIRE_DAYS * 86400
+    }
+    refresh_token = jwt.encode(refresh_payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+    
+    # 同时存储在内存中（兼容性）
+    SESSION_TOKENS[access_token] = {
+        'user_id': user_id,
+        'username': username,
+        'is_admin': is_admin,
+        'timestamp': current_time
+    }
+
+    return access_token, refresh_token
+
+
+def verify_jwt_token(token: str) -> Optional[Dict[str, Any]]:
+    """验证JWT token（安全修复：签名验证）"""
+    try:
+        # 首先尝试JWT验证
+        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        
+        # 检查token类型
+        if payload.get('type') != 'access':
+            return None
+        
+        return {
+            'user_id': payload['user_id'],
+            'username': payload['username'],
+            'is_admin': payload.get('is_admin', False),
+            'timestamp': payload['iat']
+        }
+    except jwt.ExpiredSignatureError:
+        logger.warning("Token已过期")
+        return None
+    except jwt.InvalidTokenError as e:
+        logger.warning(f"Token验证失败: {e}")
+        return None
 
 
 def verify_token(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)) -> Optional[Dict[str, Any]]:
-    """验证token并返回用户信息"""
+    """验证token并返回用户信息（支持JWT和旧session token）"""
     if not credentials:
         return None
 
     token = credentials.credentials
-    if token not in SESSION_TOKENS:
-        return None
-
-    token_data = SESSION_TOKENS[token]
-
-    # 检查token是否过期
-    if time.time() - token_data['timestamp'] > TOKEN_EXPIRE_TIME:
-        del SESSION_TOKENS[token]
-        return None
-
-    return token_data
+    
+    # 优先使用JWT验证
+    jwt_result = verify_jwt_token(token)
+    if jwt_result:
+        return jwt_result
+    
+    # 向后兼容：支持旧的session token
+    if token in SESSION_TOKENS:
+        token_data = SESSION_TOKENS[token]
+        # 检查token是否过期（使用新的过期时间）
+        if time.time() - token_data['timestamp'] > JWT_EXPIRE_HOURS * 3600:
+            del SESSION_TOKENS[token]
+            return None
+        return token_data
+    
+    return None
 
 
 def verify_admin_token(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)) -> Dict[str, Any]:
@@ -590,8 +666,8 @@ def verify_admin_token(credentials: Optional[HTTPAuthorizationCredentials] = Dep
     if not user_info:
         raise HTTPException(status_code=401, detail="未授权访问")
 
-    # 检查是否是管理员（优先使用is_admin字段，兼容旧的admin用户名判断）
-    is_admin = user_info.get('is_admin', False) or user_info['username'] == ADMIN_USERNAME
+    # 检查是否是管理员
+    is_admin = user_info.get('is_admin', False)
     if not is_admin:
         raise HTTPException(status_code=403, detail="需要管理员权限")
 
@@ -624,8 +700,7 @@ def get_user_log_prefix(user_info: Dict[str, Any] = None) -> str:
 
 def require_admin(current_user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
     """要求管理员权限"""
-    # 优先使用is_admin字段，兼容旧的admin用户名判断
-    is_admin = current_user.get('is_admin', False) or current_user['username'] == 'admin'
+    is_admin = current_user.get('is_admin', False)
     if not is_admin:
         raise HTTPException(status_code=403, detail="需要管理员权限")
     return current_user
@@ -693,12 +768,13 @@ class ResponseModel(BaseModel):
     data: ResponseData
 
 
+_docs_enabled = os.getenv("ENABLE_DOCS", "").lower() in ("true", "1")
 app = FastAPI(
     title="Xianyu Auto Reply API",
     version="1.0.0",
     description="闲鱼自动回复系统API",
-    docs_url="/docs",
-    redoc_url="/redoc"
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
 )
 
 # 注册刮刮乐远程控制路由
@@ -730,7 +806,7 @@ async def log_requests(request, call_next):
             if token in SESSION_TOKENS:
                 token_data = SESSION_TOKENS[token]
                 # 检查token是否过期
-                if time.time() - token_data['timestamp'] <= TOKEN_EXPIRE_TIME:
+                if time.time() - token_data['timestamp'] <= JWT_EXPIRE_HOURS * 3600:
                     user_info = f"【{token_data['username']}#{token_data['user_id']}】"
     except Exception:
         pass
@@ -823,10 +899,8 @@ async def root():
 async def generate_captcha(request: Request):
     """生成验证码图片"""
     # 获取客户端IP
-    client_ip = request.headers.get('X-Forwarded-For', '').split(',')[0].strip() or \
-                request.headers.get('X-Real-IP', '') or \
-                request.client.host if request.client else 'unknown'
-    
+    client_ip = request.client.host if request.client else 'unknown'
+
     # 清理过期验证码
     cleanup_expired_captchas()
     
@@ -860,10 +934,8 @@ async def generate_captcha(request: Request):
 @app.get('/captcha/check-required')
 async def check_captcha_required(request: Request):
     """检查是否需要验证码"""
-    client_ip = request.headers.get('X-Forwarded-For', '').split(',')[0].strip() or \
-                request.headers.get('X-Real-IP', '') or \
-                request.client.host if request.client else 'unknown'
-    
+    client_ip = request.client.host if request.client else 'unknown'
+
     required = is_captcha_required(client_ip)
     failure_count = get_ip_failure_count(client_ip)
     
@@ -991,10 +1063,8 @@ async def admin_page():
 async def login(login_request: LoginRequest, request: Request):
     from db_manager import db_manager
     
-    # 获取客户端IP（考虑代理）
-    client_ip = request.headers.get('X-Forwarded-For', '').split(',')[0].strip() or \
-                request.headers.get('X-Real-IP', '') or \
-                request.client.host if request.client else 'unknown'
+    # 获取客户端IP
+    client_ip = request.client.host if request.client else 'unknown'
     
     # 定期清理过期记录
     cleanup_login_trackers()
@@ -1062,7 +1132,7 @@ async def login(login_request: LoginRequest, request: Request):
                 user_is_admin = user.get('is_admin', False)
 
                 # 生成token
-                token = generate_token()
+                token = secrets.token_urlsafe(32)
                 SESSION_TOKENS[token] = {
                     'user_id': user['id'],
                     'username': user['username'],
@@ -1116,7 +1186,7 @@ async def login(login_request: LoginRequest, request: Request):
             user_is_admin = user.get('is_admin', False)
 
             # 生成token
-            token = generate_token()
+            token = secrets.token_urlsafe(32)
             SESSION_TOKENS[token] = {
                 'user_id': user['id'],
                 'username': user['username'],
@@ -1190,7 +1260,7 @@ async def login(login_request: LoginRequest, request: Request):
         user_is_admin = user.get('is_admin', False)
 
         # 生成token
-        token = generate_token()
+        token = secrets.token_urlsafe(32)
         SESSION_TOKENS[token] = {
             'user_id': user['id'],
             'username': user['username'],
@@ -1227,7 +1297,7 @@ async def verify(user_info: Optional[Dict[str, Any]] = Depends(verify_token)):
             "authenticated": True,
             "user_id": user_info['user_id'],
             "username": user_info['username'],
-            "is_admin": user_info.get('is_admin', False) or user_info['username'] == ADMIN_USERNAME
+            "is_admin": user_info.get('is_admin', False)
         }
     return {"authenticated": False}
 
@@ -1796,7 +1866,7 @@ async def register(request: RegisterRequest):
 
 # 固定的API秘钥（生产环境中应该从配置文件或环境变量读取）
 # 注意：现在从系统设置中读取QQ回复消息秘钥
-API_SECRET_KEY = "xianyu_api_secret_2024"  # 保留作为后备
+API_SECRET_KEY = os.getenv("API_SECRET_KEY", "")  # 必须通过环境变量或数据库配置
 
 class SendMessageRequest(BaseModel):
     api_key: str
@@ -1853,14 +1923,6 @@ async def send_message_api(request: SendMessageRequest):
             return SendMessageResponse(
                 success=False,
                 message="API秘钥不能为空"
-            )
-
-        # 特殊测试秘钥处理
-        if cleaned_api_key == "zhinina_test_key":
-            logger.info("使用测试秘钥，直接返回成功")
-            return SendMessageResponse(
-                success=True,
-                message="接口验证成功"
             )
 
         # 验证API秘钥
@@ -2980,7 +3042,7 @@ async def get_account_face_verification_screenshot(
         username = current_user['username']
         
         # 如果是管理员，允许访问所有账号
-        is_admin = username == 'admin'
+        is_admin = current_user.get('is_admin', False)
         
         if not is_admin:
             cookie_info = db_manager.get_cookie_details(account_id)
@@ -8283,420 +8345,6 @@ async def refresh_order_status(order_id: str, current_user: Dict[str, Any] = Dep
         import traceback
         logger.error(f"刷新订单状态异常堆栈: {traceback.format_exc()}")
         return {"success": False, "updated": False, "message": f"刷新失败: {str(e)}"}
-
-
-# ==================== 自动更新接口 ====================
-
-from auto_updater import get_updater, UpdateStatus, init_updater
-from pydantic import BaseModel as PydanticBaseModel
-
-class UpdateCheckResponse(PydanticBaseModel):
-    """更新检查响应"""
-    has_update: bool
-    current_version: str
-    new_version: str = ""
-    description: str = ""
-    changelog: list = []
-    files_count: int = 0
-    total_size: int = 0
-    release_date: str = ""
-
-
-class UpdateProgressResponse(PydanticBaseModel):
-    """更新进度响应"""
-    status: str
-    current_file: str = ""
-    current_index: int = 0
-    total_files: int = 0
-    downloaded_bytes: int = 0
-    total_bytes: int = 0
-    message: str = ""
-    error: str = ""
-
-
-class UpdateResultResponse(PydanticBaseModel):
-    """更新结果响应"""
-    success: bool
-    message: str
-    updated_files: list = []
-    deleted_files: list = []
-    needs_restart: bool = False
-    new_version: str = ""
-
-
-@app.get('/api/update/check')
-async def check_for_updates(current_user: Dict[str, Any] = Depends(get_current_user)):
-    """
-    检查是否有可用更新
-    
-    返回更新信息，包括新版本号、更新内容等
-    """
-    try:
-        updater = get_updater()
-        manifest = await updater.check_for_updates()
-        
-        if manifest is None:
-            return {
-                "success": True,
-                "data": {
-                    "has_update": False,
-                    "current_version": updater.current_version,
-                    "message": "已是最新版本"
-                }
-            }
-        
-        # 获取需要更新的文件
-        files_to_update = await updater.get_files_to_update(manifest)
-        files_to_delete = await updater.get_files_to_delete(manifest)
-        total_size = sum(f.size for f in files_to_update)
-
-        if not files_to_update and not files_to_delete:
-            return {
-                "success": True,
-                "data": {
-                    "has_update": False,
-                    "current_version": updater.current_version,
-                    "message": "已是最新版本"
-                }
-            }
-        
-        return {
-            "success": True,
-            "data": {
-                "has_update": True,
-                "current_version": updater.current_version,
-                "new_version": manifest.version,
-                "description": manifest.description,
-                "changelog": manifest.changelog or [],
-                "files_count": len(files_to_update),
-                "deleted_files_count": len(files_to_delete),
-                "total_size": total_size,
-                "release_date": manifest.release_date,
-                "files": [
-                    {
-                        "path": f.path,
-                        "size": f.size,
-                        "requires_restart": f.requires_restart,
-                        "description": f.description
-                    }
-                    for f in files_to_update
-                ],
-                "deleted_files": [
-                    {
-                        "path": f.path,
-                        "requires_restart": f.requires_restart,
-                        "description": f.description
-                    }
-                    for f in files_to_delete
-                ]
-            }
-        }
-        
-    except Exception as e:
-        logger.error(f"检查更新失败: {e}")
-        return {
-            "success": False,
-            "message": f"检查更新失败: {str(e)}"
-        }
-
-
-@app.post('/api/update/apply')
-async def apply_updates(current_user: Dict[str, Any] = Depends(get_current_user)):
-    """
-    应用更新
-    
-    下载并安装所有可用更新
-    """
-    try:
-        # 只允许管理员执行更新，兼容历史 admin 用户名判断
-        if not current_user.get('is_admin') and current_user.get('username') != 'admin':
-            raise HTTPException(status_code=403, detail="只有管理员可以执行更新")
-        
-        updater = get_updater()
-        
-        log_with_user('info', "开始执行自动更新", current_user)
-        
-        result = await updater.perform_update()
-        
-        if result["success"]:
-            log_with_user('info', f"更新完成: {result['message']}", current_user)
-        else:
-            log_with_user('error', f"更新失败: {result['message']}", current_user)
-        
-        return {
-            "success": result["success"],
-            "data": result
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"应用更新失败: {e}")
-        return {
-            "success": False,
-            "message": f"应用更新失败: {str(e)}"
-        }
-
-
-@app.get('/api/update/progress')
-async def get_update_progress(current_user: Dict[str, Any] = Depends(get_current_user)):
-    """
-    获取更新进度
-    
-    返回当前更新状态和进度信息
-    """
-    try:
-        updater = get_updater()
-        progress = updater.progress
-        
-        return {
-            "success": True,
-            "data": {
-                "status": progress.status.value,
-                "current_file": progress.current_file,
-                "current_index": progress.current_index,
-                "total_files": progress.total_files,
-                "downloaded_bytes": progress.downloaded_bytes,
-                "total_bytes": progress.total_bytes,
-                "message": progress.message,
-                "error": progress.error
-            }
-        }
-        
-    except Exception as e:
-        logger.error(f"获取更新进度失败: {e}")
-        return {
-            "success": False,
-            "message": f"获取更新进度失败: {str(e)}"
-        }
-
-
-@app.get('/api/update/local-hashes')
-async def get_local_file_hashes(current_user: Dict[str, Any] = Depends(get_current_user)):
-    """
-    获取本地文件哈希值
-    
-    用于服务端比对哪些文件需要更新
-    """
-    try:
-        # 只允许管理员查看（检查username是否为admin）
-        if current_user.get('username') != 'admin':
-            raise HTTPException(status_code=403, detail="只有管理员可以查看文件哈希")
-        
-        updater = get_updater()
-        hashes = updater.get_local_file_hashes()
-        
-        return {
-            "success": True,
-            "data": {
-                "version": updater.current_version,
-                "files": hashes,
-                "count": len(hashes)
-            }
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"获取文件哈希失败: {e}")
-        return {
-            "success": False,
-            "message": f"获取文件哈希失败: {str(e)}"
-        }
-
-
-@app.post('/api/update/cleanup-backups')
-async def cleanup_old_backups(days: int = 7, current_user: Dict[str, Any] = Depends(get_current_user)):
-    """
-    清理旧的备份文件
-    
-    Args:
-        days: 保留天数，默认7天
-    """
-    try:
-        # 只允许管理员执行（检查username是否为admin）
-        if current_user.get('username') != 'admin':
-            raise HTTPException(status_code=403, detail="只有管理员可以清理备份")
-        
-        updater = get_updater()
-        updater.cleanup_old_backups(keep_days=days)
-        
-        log_with_user('info', f"清理了 {days} 天前的备份文件", current_user)
-        
-        return {
-            "success": True,
-            "message": f"已清理 {days} 天前的备份文件"
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"清理备份失败: {e}")
-        return {
-            "success": False,
-            "message": f"清理备份失败: {str(e)}"
-        }
-
-
-@app.get('/api/update/file-changes')
-async def get_file_changes(current_user: Dict[str, Any] = Depends(get_current_user)):
-    """
-    比较当前文件与上次更新后的哈希清单
-    
-    用于检测哪些文件在更新后被本地修改过
-    """
-    try:
-        # 只允许管理员查看
-        if current_user.get('username') != 'admin':
-            raise HTTPException(status_code=403, detail="只有管理员可以查看文件变化")
-        
-        updater = get_updater()
-        result = updater.compare_file_hashes()
-        
-        return {
-            "success": True,
-            "data": result
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"比较文件变化失败: {e}")
-        return {
-            "success": False,
-            "message": f"比较文件变化失败: {str(e)}"
-        }
-
-
-@app.post('/api/update/save-hashes')
-async def save_current_hashes(current_user: Dict[str, Any] = Depends(get_current_user)):
-    """
-    手动保存当前文件的哈希清单
-    
-    用于记录当前状态，以便以后比较
-    """
-    try:
-        # 只允许管理员执行
-        if current_user.get('username') != 'admin':
-            raise HTTPException(status_code=403, detail="只有管理员可以保存哈希清单")
-        
-        updater = get_updater()
-        updater.save_file_hashes(updater.current_version)
-        
-        log_with_user('info', "手动保存文件哈希清单", current_user)
-        
-        return {
-            "success": True,
-            "message": "文件哈希清单已保存"
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"保存哈希清单失败: {e}")
-        return {
-            "success": False,
-            "message": f"保存哈希清单失败: {str(e)}"
-        }
-
-
-@app.get('/api/update/saved-hashes')
-async def get_saved_hashes(current_user: Dict[str, Any] = Depends(get_current_user)):
-    """
-    获取上次保存的文件哈希清单
-    """
-    try:
-        # 只允许管理员查看
-        if current_user.get('username') != 'admin':
-            raise HTTPException(status_code=403, detail="只有管理员可以查看哈希清单")
-        
-        updater = get_updater()
-        saved_hashes = updater.load_file_hashes()
-        
-        if saved_hashes is None:
-            return {
-                "success": True,
-                "data": None,
-                "message": "没有保存的哈希清单"
-            }
-        
-        return {
-            "success": True,
-            "data": {
-                "version": saved_hashes.get("version"),
-                "updated_at": saved_hashes.get("updated_at"),
-                "total_files": saved_hashes.get("total_files"),
-                "last_updated_files": saved_hashes.get("last_updated_files", []),
-                "last_updated_count": saved_hashes.get("last_updated_count", 0)
-            }
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"获取哈希清单失败: {e}")
-        return {
-            "success": False,
-            "message": f"获取哈希清单失败: {str(e)}"
-        }
-
-
-@app.post('/api/update/restart')
-async def restart_application(current_user: Dict[str, Any] = Depends(get_current_user)):
-    """
-    重启应用（用于更新后重启）
-    
-    注意：此操作会重启整个应用
-    """
-    try:
-        # 只允许管理员执行
-        if not current_user.get('is_admin'):
-            raise HTTPException(status_code=403, detail="只有管理员可以重启应用")
-        
-        log_with_user('info', "用户请求重启应用", current_user)
-        
-        import subprocess
-        import sys
-        
-        # 返回响应后异步重启
-        async def delayed_restart():
-            await asyncio.sleep(2)  # 等待2秒让响应返回
-            logger.info("正在重启应用...")
-            
-            # 获取当前Python解释器和脚本路径
-            python = sys.executable
-            script = sys.argv[0]
-            
-            # 在Windows上使用start命令启动新进程
-            if sys.platform == 'win32':
-                subprocess.Popen(
-                    [python, script],
-                    creationflags=subprocess.CREATE_NEW_CONSOLE
-                )
-            else:
-                # Linux/Mac
-                subprocess.Popen([python, script])
-            
-            # 退出当前进程
-            os._exit(0)
-        
-        # 创建后台任务
-        asyncio.create_task(delayed_restart())
-        
-        return {
-            "success": True,
-            "message": "应用将在2秒后重启"
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"重启应用失败: {e}")
-        return {
-            "success": False,
-            "message": f"重启应用失败: {str(e)}"
-        }
-
 
 # 移除自动启动，由Start.py或手动启动
 # if __name__ == "__main__":

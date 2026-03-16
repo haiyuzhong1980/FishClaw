@@ -290,6 +290,7 @@ build/
 # 文档文件（除了README.md）
 *.md
 !README.md
+!README_EN.md
 !CHANGELOG.md
 !CONTRIBUTING.md
 !LICENSE.md

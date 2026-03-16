@@ -94,8 +94,15 @@ COOKIES_LAST_UPDATE = config.get('COOKIES.last_update_time', '')
 WEBSOCKET_URL = config.get('WEBSOCKET_URL', 'wss://wss-goofish.dingtalk.com/')
 HEARTBEAT_INTERVAL = config.get('HEARTBEAT_INTERVAL', 15)
 HEARTBEAT_TIMEOUT = config.get('HEARTBEAT_TIMEOUT', 30)
-TOKEN_REFRESH_INTERVAL = config.get('TOKEN_REFRESH_INTERVAL', 72000)
-TOKEN_RETRY_INTERVAL = config.get('TOKEN_RETRY_INTERVAL', 7200)
+TOKEN_REFRESH_INTERVAL = config.get('TOKEN_REFRESH_INTERVAL', 72000)  # 20小时
+TOKEN_RETRY_INTERVAL = config.get('TOKEN_RETRY_INTERVAL', 7200)  # 2小时
+ACTIVE_HOURS = config.get('ACTIVE_HOURS', {
+    'enabled': True,
+    'start': 7,
+    'end': 23,
+    'off_hours_min_delay': 300,
+    'off_hours_max_delay': 1800,
+})
 MESSAGE_EXPIRE_TIME = config.get('MESSAGE_EXPIRE_TIME', 300000)
 SLIDER_VERIFICATION = config.get('SLIDER_VERIFICATION', {
     'max_concurrent': 3,
@@ -116,10 +123,6 @@ AUTO_REPLY = config.get('AUTO_REPLY', {
 })
 MANUAL_MODE = config.get('MANUAL_MODE', {})
 LOG_CONFIG = config.get('LOG_CONFIG', {})
-YIFAN_API = config.get('YIFAN_API', {
-    'callback_url': 'http://116.196.116.76/yifan.php',
-    'query_url': 'http://116.196.116.76/yifan.php'
-})
 _cookies_raw = config.get('COOKIES', [])
 if isinstance(_cookies_raw, list):
     COOKIES_LIST = _cookies_raw

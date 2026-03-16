@@ -4364,18 +4364,26 @@ async function testAIReply() {
 
     if (response.ok) {
         const result = await response.json();
-        testReplyContent.innerHTML = result.reply;
+        testReplyContent.textContent = result.reply;
         showToast('AI回复测试成功', 'success');
     } else {
         const error = await response.text();
-        testReplyContent.innerHTML = `<span class="text-danger">测试失败: ${error}</span>`;
+        const errSpan = document.createElement('span');
+        errSpan.className = 'text-danger';
+        errSpan.textContent = `测试失败: ${error}`;
+        testReplyContent.innerHTML = '';
+        testReplyContent.appendChild(errSpan);
         showToast(`测试失败: ${error}`, 'danger');
     }
 
     } catch (error) {
     console.error('测试AI回复失败:', error);
     const testReplyContent = document.getElementById('testReplyContent');
-    testReplyContent.innerHTML = `<span class="text-danger">测试失败: ${error.message}</span>`;
+    const errSpan = document.createElement('span');
+    errSpan.className = 'text-danger';
+    errSpan.textContent = `测试失败: ${error.message}`;
+    testReplyContent.innerHTML = '';
+    testReplyContent.appendChild(errSpan);
     showToast('测试AI回复失败', 'danger');
     } finally {
     if (testBtn) { testBtn.disabled = false; testBtn.textContent = '测试回复'; }
@@ -5860,9 +5868,6 @@ function renderCardsList(cards) {
         case 'api':
         typeBadge = '<span class="badge bg-info">API接口</span>';
         break;
-        case 'yifan_api':
-        typeBadge = '<span class="badge bg-purple">亦凡卡劵API</span>';
-        break;
         case 'text':
         typeBadge = '<span class="badge bg-success">固定文字</span>';
         break;
@@ -5973,7 +5978,6 @@ function toggleCardTypeFields() {
     };
 
     setDisplay('apiFields', cardType === 'api');
-    setDisplay('yifanApiFields', cardType === 'yifan_api');
     setDisplay('textFields', cardType === 'text');
     setDisplay('dataFields', cardType === 'data');
     setDisplay('imageFields', cardType === 'image');
@@ -6353,12 +6357,6 @@ function clearAddCardForm() {
     setElementValue('apiHeaders', '');
     setElementValue('apiParams', '');
     setElementValue('apiTimeout', '10');
-    setElementValue('yifanUserId', '');
-    setElementValue('yifanUserKey', '');
-    setElementValue('yifanGoodsId', '');
-    setElementValue('yifanCallbackUrl', '');
-    setElementValue('yifanRequireAccount', false);
-
     // 重置字段显示
     toggleCardTypeFields();
     } catch (error) {
@@ -6448,26 +6446,6 @@ async function saveCard() {
             timeout: parseInt(document.getElementById('apiTimeout').value),
             headers: headers,
             params: params
-        };
-        break;
-        case 'yifan_api':
-        // 验证必填字段
-        const yifanUserId = document.getElementById('yifanUserId').value.trim();
-        const yifanUserKey = document.getElementById('yifanUserKey').value.trim();
-        const yifanGoodsId = document.getElementById('yifanGoodsId').value.trim();
-
-        if (!yifanUserId || !yifanUserKey || !yifanGoodsId) {
-            showToast('请填写商户ID、商户KEY和商品ID', 'warning');
-            return;
-        }
-
-        // 亦凡API配置也存储在api_config字段中
-        cardData.api_config = {
-            user_id: yifanUserId,
-            user_key: yifanUserKey,
-            goods_id: yifanGoodsId,
-            callback_url: document.getElementById('yifanCallbackUrl').value.trim(),
-            require_account: document.getElementById('yifanRequireAccount').checked
         };
         break;
         case 'text':
@@ -6611,9 +6589,6 @@ function renderDeliveryRulesList(rules) {
         switch(rule.card_type) {
         case 'api':
             cardTypeBadge = '<span class="badge bg-info">API接口</span>';
-            break;
-        case 'yifan_api':
-            cardTypeBadge = '<span class="badge bg-purple">亦凡卡劵API</span>';
             break;
         case 'text':
             cardTypeBadge = '<span class="badge bg-success">固定文字</span>';
@@ -6859,12 +6834,6 @@ async function editCard(cardId) {
         document.getElementById('editApiTimeout').value = card.api_config.timeout || 10;
         document.getElementById('editApiHeaders').value = card.api_config.headers || '{}';
         document.getElementById('editApiParams').value = card.api_config.params || '{}';
-        } else if (card.type === 'yifan_api' && card.api_config) {
-        document.getElementById('editYifanUserId').value = card.api_config.user_id || '';
-        document.getElementById('editYifanUserKey').value = card.api_config.user_key || '';
-        document.getElementById('editYifanGoodsId').value = card.api_config.goods_id || '';
-        document.getElementById('editYifanCallbackUrl').value = card.api_config.callback_url || '';
-        document.getElementById('editYifanRequireAccount').checked = card.api_config.require_account || false;
         } else if (card.type === 'text') {
         document.getElementById('editTextContent').value = card.text_content || '';
         } else if (card.type === 'data') {
@@ -6924,7 +6893,6 @@ function toggleEditCardTypeFields() {
     const cardType = document.getElementById('editCardType').value;
 
     document.getElementById('editApiFields').style.display = cardType === 'api' ? 'block' : 'none';
-    document.getElementById('editYifanApiFields').style.display = cardType === 'yifan_api' ? 'block' : 'none';
     document.getElementById('editTextFields').style.display = cardType === 'text' ? 'block' : 'none';
     document.getElementById('editDataFields').style.display = cardType === 'data' ? 'block' : 'none';
     document.getElementById('editImageFields').style.display = cardType === 'image' ? 'block' : 'none';
@@ -7039,26 +7007,6 @@ async function updateCard() {
             timeout: parseInt(document.getElementById('editApiTimeout').value),
             headers: headers,
             params: params
-        };
-        break;
-        case 'yifan_api':
-        // 验证必填字段
-        const editYifanUserId = document.getElementById('editYifanUserId').value.trim();
-        const editYifanUserKey = document.getElementById('editYifanUserKey').value.trim();
-        const editYifanGoodsId = document.getElementById('editYifanGoodsId').value.trim();
-
-        if (!editYifanUserId || !editYifanUserKey || !editYifanGoodsId) {
-            showToast('请填写商户ID、商户KEY和商品ID', 'warning');
-            return;
-        }
-
-        // 亦凡API配置也存储在api_config字段中
-        cardData.api_config = {
-            user_id: editYifanUserId,
-            user_key: editYifanUserKey,
-            goods_id: editYifanGoodsId,
-            callback_url: document.getElementById('editYifanCallbackUrl').value.trim(),
-            require_account: document.getElementById('editYifanRequireAccount').checked
         };
         break;
         case 'text':
@@ -10124,12 +10072,19 @@ document.addEventListener('DOMContentLoaded', function() {
                 const username = selectedOption.dataset.username;
 
                 if (hasCredentials) {
-                    statusDiv.innerHTML = `<span class="text-success"><i class="bi bi-check-circle me-1"></i>已配置用户名: ${username}</span>`;
+                    const okSpan = document.createElement('span');
+                    okSpan.className = 'text-success';
+                    const okIcon = document.createElement('i');
+                    okIcon.className = 'bi bi-check-circle me-1';
+                    okSpan.appendChild(okIcon);
+                    okSpan.appendChild(document.createTextNode(`已配置用户名: ${username}`));
+                    statusDiv.innerHTML = '';
+                    statusDiv.appendChild(okSpan);
                 } else {
-                    statusDiv.innerHTML = `<span class="text-danger"><i class="bi bi-x-circle me-1"></i>未配置用户名和密码，无法刷新</span>`;
+                    statusDiv.innerHTML = '<span class="text-danger"><i class="bi bi-x-circle me-1"></i>未配置用户名和密码，无法刷新</span>';
                 }
             } else {
-                statusDiv.innerHTML = '请先选择账号';
+                statusDiv.textContent = '请先选择账号';
             }
         });
     }
@@ -13720,7 +13675,10 @@ function deleteRecord(record, index) {
 
     Object.keys(record).forEach(key => {
         const div = document.createElement('div');
-        div.innerHTML = `<strong>${key}:</strong> ${record[key] || '-'}`;
+        const strong = document.createElement('strong');
+        strong.textContent = `${key}:`;
+        div.appendChild(strong);
+        div.appendChild(document.createTextNode(` ${record[key] || '-'}`));
         deleteRecordInfo.appendChild(div);
     });
 
@@ -14879,8 +14837,7 @@ const DEFAULT_VERSION = 'v1.5.0';
 // 当前本地版本号（动态从 version.txt 读取）
 let LOCAL_VERSION = DEFAULT_VERSION;
 
-// 远程版本检查API地址（暂时禁用）
-// const VERSION_CHECK_URL = 'http://116.196.116.76/version.php';
+
 
 // 缓存远程版本信息
 let remoteVersionInfo = null;
@@ -15687,141 +15644,6 @@ function showChangelogModal() {
     // 显示模态框
     const modal = new bootstrap.Modal(document.getElementById('changelogModal'));
     modal.show();
-}
-
-/**
- * 显示最新权益弹窗
- */
-async function showBenefitsModal() {
-    try {
-        // 获取权益信息（使用缓存或重新请求）
-        const benefitsData = await getBenefitsInfo();
-        
-        if (!benefitsData || !benefitsData.benefits || benefitsData.benefits.length === 0) {
-            showToast('暂无权益信息', 'info');
-            return;
-        }
-        
-        // 构建权益列表
-        const benefitsList = benefitsData.benefits.map(benefit => `
-            <a href="${benefit.url}" target="_blank" class="benefit-item" style="text-decoration: none; display: block; margin-bottom: 12px; border-radius: 12px; overflow: hidden; border: 1px solid #e8ecf0; transition: all 0.3s ease; box-shadow: 0 2px 8px rgba(0,0,0,0.04);">
-                <div style="background: linear-gradient(135deg, ${benefit.color || '#667eea'}20, ${benefit.color || '#667eea'}10); padding: 16px; display: flex; align-items: center; gap: 16px;">
-                    <div style="width: 50px; height: 50px; border-radius: 12px; background: ${benefit.color || '#667eea'}; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
-                        <i class="bi ${benefit.icon || 'bi-gift'}" style="font-size: 24px; color: #fff;"></i>
-                    </div>
-                    <div style="flex: 1;">
-                        <div style="font-size: 16px; font-weight: 600; color: #333; margin-bottom: 4px;">${benefit.name}</div>
-                        <div style="font-size: 14px; color: #666;">${benefit.description || ''}</div>
-                    </div>
-                    <i class="bi bi-arrow-right-circle" style="font-size: 20px; color: ${benefit.color || '#667eea'};"></i>
-                </div>
-            </a>
-        `).join('');
-        
-        const modalHtml = `
-            <div class="modal fade" id="benefitsModal" tabindex="-1">
-                <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
-                    <div class="modal-content" style="border: none; border-radius: 16px; overflow: hidden; box-shadow: 0 12px 40px rgba(0,0,0,0.15);">
-                        <!-- 头部 -->
-                        <div class="modal-header py-3" style="background: linear-gradient(135deg, #ff6b6b 0%, #feca57 50%, #48dbfb 100%); border: none;">
-                            <h5 class="modal-title mb-0" style="color: #fff; font-weight: 700; font-size: 20px; text-shadow: 0 1px 2px rgba(0,0,0,0.1);">
-                                <i class="bi bi-gift me-2"></i>最新权益 · 薅羊毛专区
-                            </h5>
-                            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                        </div>
-                        <!-- 内容 -->
-                        <div class="modal-body py-4 px-4" style="background: linear-gradient(180deg, #fef9f3 0%, #f8fafc 100%);">
-                            <!-- 提示区域 -->
-                            <div class="rounded-3 p-3 mb-4" style="background: linear-gradient(135deg, #fff8e1, #ffecb3); color: #e65100; font-size: 14px; line-height: 1.6; border: 1px dashed #ffcc80;">
-                                <i class="bi bi-lightbulb me-2"></i>
-                                <strong>温馨提示：</strong>以下是精选的优质权益资源，点击即可跳转查看详情。持续更新中~
-                            </div>
-                            
-                            <!-- 权益列表 -->
-                            <div class="benefits-list">
-                                ${benefitsList}
-                            </div>
-                            
-                            <!-- 底部说明 -->
-                            <div class="text-center mt-3" style="color: #999; font-size: 13px;">
-                                <i class="bi bi-info-circle me-1"></i>
-                                以上权益由系统推荐，如有问题请联系管理员
-                            </div>
-                        </div>
-                        <!-- 底部 -->
-                        <div class="modal-footer py-3" style="background: #fff; border-top: 1px solid #e8ecf0;">
-                            <button type="button" class="btn" style="background: linear-gradient(135deg, #667eea, #764ba2); color: #fff; border: none; font-size: 15px; padding: 10px 24px; border-radius: 8px;" data-bs-dismiss="modal">
-                                <i class="bi bi-x-lg me-1"></i>关闭
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <style>
-                .benefit-item:hover {
-                    transform: translateX(5px);
-                    box-shadow: 0 4px 16px rgba(0,0,0,0.1) !important;
-                }
-            </style>
-        `;
-        
-        // 移除已存在的模态框
-        const existingModal = document.getElementById('benefitsModal');
-        if (existingModal) {
-            existingModal.remove();
-        }
-        
-        // 添加新的模态框
-        document.body.insertAdjacentHTML('beforeend', modalHtml);
-        
-        // 显示模态框
-        const modal = new bootstrap.Modal(document.getElementById('benefitsModal'));
-        modal.show();
-        
-    } catch (error) {
-        console.error('显示权益弹窗失败:', error);
-        showToast('获取权益信息失败', 'danger');
-    }
-}
-
-/**
- * 获取权益信息（使用缓存或重新请求）
- */
-async function getBenefitsInfo() {
-    // 如果已有缓存的远程版本信息并包含权益，直接使用
-    if (remoteVersionInfo && remoteVersionInfo.benefits) {
-        return remoteVersionInfo;
-    }
-
-    // 从远程获取权益信息
-    try {
-        const response = await fetch('http://116.196.116.76/version.php', {
-            method: 'GET',
-            headers: {
-                'Accept': 'application/json'
-            }
-        });
-
-        if (!response.ok) {
-            showToast('获取权益信息失败: 网络错误', 'danger');
-            return null;
-        }
-
-        const result = await response.json();
-
-        if (result.error || !result.success) {
-            showToast('获取权益信息失败: ' + (result.message || '未知错误'), 'danger');
-            return null;
-        }
-
-        remoteVersionInfo = result.data;
-        return remoteVersionInfo;
-
-    } catch (error) {
-        console.error('获取权益信息失败:', error);
-        showToast('获取权益信息失败: ' + error.message, 'danger');
-        return null;
-    }
 }
 
 // =============================================================================

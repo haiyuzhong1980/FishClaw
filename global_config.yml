@@ -20,18 +20,15 @@ AUTO_REPLY:
   retry_interval: 5
 ITEM_DETAIL:
   auto_fetch:
-    enabled: true  # 是否启用自动获取商品详情
-    api_url: https://selfapi.zhinianboke.com/api/getItemDetail  # 外部API地址
+    enabled: false  # 是否启用自动获取商品详情
+    api_url: ''  # 外部API地址
     timeout: 30  # 请求超时时间（秒）
     max_concurrent: 3  # 最大并发请求数
     retry_delay: 0.5  # 请求间隔（秒）
-YIFAN_API:
-  callback_url: http://116.196.116.76/yifan.php  # 亦凡API回调地址（中转服务器）
-  query_url: http://116.196.116.76/yifan.php  # 订单查询页面地址
 COOKIES:
   last_update_time: ''
   value: ''
-DEFAULT_HEADERS:
+DEFAULT_HEADERS:  # User-Agent 统一为 Chrome 133；实际运行时会被 per-account 指纹覆盖
   accept: application/json
   accept-language: zh-CN,zh;q=0.9
   cache-control: no-cache
@@ -47,7 +44,13 @@ DEFAULT_HEADERS:
   sec-fetch-site: same-site
   user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
     like Gecko) Chrome/133.0.0.0 Safari/537.36
-HEARTBEAT_INTERVAL: 15
+ACTIVE_HOURS:
+  enabled: true      # 是否启用活跃时间窗口
+  start: 7           # 活跃开始时间（小时，24小时制）
+  end: 23            # 活跃结束时间
+  off_hours_min_delay: 300    # 非活跃时段最小延迟（秒）
+  off_hours_max_delay: 1800   # 非活跃时段最大延迟（秒）
+HEARTBEAT_INTERVAL: 15  # 基础心跳间隔（秒），运行时自动添加 ±3 秒随机抖动
 HEARTBEAT_TIMEOUT: 30
 LOG_CONFIG:
   compression: zip
@@ -61,12 +64,12 @@ MANUAL_MODE:
   timeout: 3600
   toggle_keywords: []
 MESSAGE_EXPIRE_TIME: 300000
-TOKEN_REFRESH_INTERVAL: 3600  # 从3600秒(1小时)增加到72000秒(20小时)
-TOKEN_RETRY_INTERVAL: 600    # 从300秒(5分钟)增加到7200秒(2小时)
+TOKEN_REFRESH_INTERVAL: 72000  # 20小时（_m_h5_tk 有效期通常24小时，提前4小时刷新）
+TOKEN_RETRY_INTERVAL: 7200    # 刷新失败后重试间隔：2小时
 SLIDER_VERIFICATION:
   max_concurrent: 3  # 滑块验证最大并发数
   wait_timeout: 60   # 等待排队超时时间（秒）
-WEBSOCKET_HEADERS:
+WEBSOCKET_HEADERS:  # User-Agent 统一为 Chrome 133；实际运行时会被 per-account 指纹覆盖
   Accept-Encoding: gzip, deflate, br, zstd
   Accept-Language: zh-CN,zh;q=0.9
   Cache-Control: no-cache

@@ -14,6 +14,15 @@ from PIL import Image, ImageDraw, ImageFont
 from typing import List, Tuple, Dict, Optional, Any
 from cryptography.fernet import Fernet, InvalidToken
 from loguru import logger
+from passlib.context import CryptContext
+from passlib.exc import UnknownHashError
+
+# Password hashing context with bcrypt
+pwd_context = CryptContext(
+    schemes=["bcrypt"],
+    deprecated="auto",
+    bcrypt__rounds=12
+)
 
 class DBManager:
     """SQLite数据库管理，持久化存储Cookie和关键字"""
@@ -54,17 +63,15 @@ class DBManager:
         self.secret_fernet = None
         self.secret_key_path = None
 
-        # SQL日志配置 - 默认启用
-        self.sql_log_enabled = True  # 默认启用SQL日志
+        # SQL日志配置 - 默认关闭
+        self.sql_log_enabled = False  # 默认关闭SQL日志
         self.sql_log_level = 'INFO'  # 默认使用INFO级别
 
         # 允许通过环境变量覆盖默认设置
         if os.getenv('SQL_LOG_ENABLED'):
-            self.sql_log_enabled = os.getenv('SQL_LOG_ENABLED', 'true').lower() == 'true'
+            self.sql_log_enabled = os.getenv('SQL_LOG_ENABLED', 'false').lower() == 'true'
         if os.getenv('SQL_LOG_LEVEL'):
             self.sql_log_level = os.getenv('SQL_LOG_LEVEL', 'INFO').upper()
-
-        logger.info(f"SQL日志已启用，日志级别: {self.sql_log_level}")
 
         self._init_secret_cipher()
 
@@ -79,26 +86,26 @@ class DBManager:
             logger.warning(f"迁移明文账号敏感信息失败: {e}")
 
     def _init_secret_cipher(self):
-        """初始化敏感字段加密器。"""
+        """初始化敏感字段加密器。强制从环境变量读取加密密钥。"""
         env_key = os.getenv('SECRET_ENCRYPTION_KEY', '').strip()
-        if env_key:
+        
+        # 安全修复：强制要求环境变量提供加密密钥
+        if not env_key:
+            logger.error("❌ 安全配置错误：SECRET_ENCRYPTION_KEY 环境变量未设置")
+            logger.error("请设置环境变量：export SECRET_ENCRYPTION_KEY=<your-32-byte-base64-key>")
+            logger.error("可以使用以下命令生成密钥：python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\"")
+            raise ValueError("SECRET_ENCRYPTION_KEY 环境变量必须设置")
+        
+        try:
             key = env_key.encode('utf-8')
-        else:
-            db_dir = os.path.dirname(self.db_path) or '.'
-            self.secret_key_path = os.path.join(db_dir, '.secret_encryption.key')
-            if os.path.exists(self.secret_key_path):
-                with open(self.secret_key_path, 'rb') as f:
-                    key = f.read().strip()
-            else:
-                key = Fernet.generate_key()
-                with open(self.secret_key_path, 'wb') as f:
-                    f.write(key)
-                try:
-                    os.chmod(self.secret_key_path, 0o600)
-                except Exception:
-                    pass
-
-        self.secret_fernet = Fernet(key)
+            # 验证密钥格式
+            if len(base64.urlsafe_b64decode(key)) != 32:
+                raise ValueError("密钥长度不正确，必须是32字节的base64编码字符串")
+            self.secret_fernet = Fernet(key)
+            logger.info("✅ 加密密钥已从环境变量加载")
+        except Exception as e:
+            logger.error(f"❌ 加密密钥格式错误: {e}")
+            raise ValueError(f"SECRET_ENCRYPTION_KEY 格式错误: {e}")
 
     def _is_encrypted_secret(self, value: Any) -> bool:
         return isinstance(value, str) and value.startswith('enc$')
@@ -870,6 +877,18 @@ Cookie数量: {cookie_count}
                 cursor.execute("ALTER TABLE cookies ADD COLUMN auto_comment INTEGER DEFAULT 0")
                 logger.info("数据库迁移完成：添加auto_comment列")
 
+            # 检查cookies表是否存在device_id列
+            if 'device_id' not in cookie_columns:
+                logger.info("添加cookies表的device_id列...")
+                cursor.execute("ALTER TABLE cookies ADD COLUMN device_id TEXT DEFAULT NULL")
+                logger.info("数据库迁移完成：添加device_id列")
+
+            # 检查cookies表是否存在fingerprint列
+            if 'fingerprint' not in cookie_columns:
+                logger.info("添加cookies表的fingerprint列...")
+                cursor.execute("ALTER TABLE cookies ADD COLUMN fingerprint TEXT DEFAULT NULL")
+                logger.info("数据库迁移完成：添加fingerprint列")
+
             # 迁移notification_templates表以支持新的模板类型
             self._migrate_notification_templates(cursor)
 
@@ -1115,22 +1134,39 @@ Cookie数量: {cookie_count}
             admin_exists = cursor.fetchone()[0] > 0
 
             if not admin_exists:
-                # 首次创建admin用户，设置默认密码和管理员权限
-                default_password_hash = hashlib.sha256("admin123".encode()).hexdigest()
-                # 检查is_admin列是否存在
+                # 安全修复：从环境变量读取初始密码，使用bcrypt加密
+                default_password = os.getenv('ADMIN_INITIAL_PASSWORD', '').strip()
+                if not default_password:
+                    logger.error("❌ 安全配置错误：ADMIN_INITIAL_PASSWORD 环境变量未设置")
+                    logger.error("请设置环境变量：export ADMIN_INITIAL_PASSWORD=<your-secure-password>")
+                    raise ValueError("ADMIN_INITIAL_PASSWORD 环境变量必须设置")
+                
+                # 使用bcrypt加密密码
+                default_password_hash = pwd_context.hash(default_password)
+                
+                # 检查is_admin和password_changed_at列是否存在
                 try:
                     cursor.execute('SELECT is_admin FROM users LIMIT 1')
-                    cursor.execute('''
-                    INSERT INTO users (username, email, password_hash, is_admin) VALUES
-                    ('admin', 'admin@localhost', ?, 1)
-                    ''', (default_password_hash,))
+                    # 检查password_changed_at列
+                    try:
+                        cursor.execute('SELECT password_changed_at FROM users LIMIT 1')
+                        cursor.execute('''
+                        INSERT INTO users (username, email, password_hash, is_admin, password_changed_at) VALUES
+                        ('admin', 'admin@localhost', ?, 1, NULL)
+                        ''', (default_password_hash,))
+                    except sqlite3.OperationalError:
+                        # password_changed_at列不存在，使用旧表结构
+                        cursor.execute('''
+                        INSERT INTO users (username, email, password_hash, is_admin) VALUES
+                        ('admin', 'admin@localhost', ?, 1)
+                        ''', (default_password_hash,))
                 except sqlite3.OperationalError:
                     # is_admin列不存在，使用旧的INSERT语句
                     cursor.execute('''
                     INSERT INTO users (username, email, password_hash) VALUES
                     ('admin', 'admin@localhost', ?)
                     ''', (default_password_hash,))
-                logger.info("创建默认admin用户，默认密码已初始化，请尽快修改")
+                logger.info("✅ 创建默认admin用户，使用bcrypt加密，首次登录必须修改密码")
 
             # 获取admin用户ID，用于历史数据绑定
             self._execute_sql(cursor, "SELECT id FROM users WHERE username = 'admin'")
@@ -2237,6 +2273,63 @@ Cookie数量: {cookie_count}
                 return True
             except Exception as e:
                 logger.error(f"更新自动好评设置失败: {e}")
+                return False
+
+    def get_account_device_id(self, cookie_id: str):
+        """获取账号的设备ID"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                self._execute_sql(cursor, "SELECT device_id FROM cookies WHERE id = ?", (cookie_id,))
+                result = cursor.fetchone()
+                if result and result[0]:
+                    return result[0]
+                return None
+            except Exception as e:
+                logger.error(f"获取账号设备ID失败: {e}")
+                return None
+
+    def save_account_device_id(self, cookie_id: str, device_id: str) -> bool:
+        """保存账号的设备ID"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                self._execute_sql(cursor, "UPDATE cookies SET device_id = ? WHERE id = ?", (device_id, cookie_id))
+                self.conn.commit()
+                logger.info(f"保存账号 {cookie_id} 设备ID成功")
+                return True
+            except Exception as e:
+                logger.error(f"保存账号设备ID失败: {e}")
+                return False
+
+    def get_account_fingerprint(self, cookie_id: str):
+        """获取账号指纹配置"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                self._execute_sql(cursor, "SELECT fingerprint FROM cookies WHERE id = ?", (cookie_id,))
+                result = cursor.fetchone()
+                if result and result[0]:
+                    import json
+                    return json.loads(result[0])
+                return None
+            except Exception as e:
+                logger.error(f"获取账号指纹配置失败: {e}")
+                return None
+
+    def save_account_fingerprint(self, cookie_id: str, fingerprint_dict: dict) -> bool:
+        """保存账号指纹配置"""
+        with self.lock:
+            try:
+                import json
+                cursor = self.conn.cursor()
+                fp_json = json.dumps(fingerprint_dict)
+                self._execute_sql(cursor, "UPDATE cookies SET fingerprint = ? WHERE id = ?", (fp_json, cookie_id))
+                self.conn.commit()
+                logger.info(f"保存账号 {cookie_id} 指纹配置成功")
+                return True
+            except Exception as e:
+                logger.error(f"保存账号指纹配置失败: {e}")
                 return False
 
     def get_comment_templates(self, cookie_id: str) -> List[Dict]:
@@ -3788,29 +3881,60 @@ Cookie数量: {cookie_count}
                 return None
 
     def verify_user_password(self, username: str, password: str) -> bool:
-        """验证用户密码"""
+        """验证用户密码（支持bcrypt和旧SHA256，自动迁移）"""
         user = self.get_user_by_username(username)
         if not user:
             return False
 
-        password_hash = hashlib.sha256(password.encode()).hexdigest()
-        return user['password_hash'] == password_hash and user['is_active']
+        stored_hash = user['password_hash']
+        
+        # 尝试使用bcrypt验证（新格式）
+        try:
+            if stored_hash.startswith('$2b$') or stored_hash.startswith('$2a$'):
+                # bcrypt hash
+                if pwd_context.verify(password, stored_hash):
+                    return user['is_active']
+        except UnknownHashError:
+            pass
+        
+        # 向后兼容：尝试SHA256验证（旧格式）
+        old_hash = hashlib.sha256(password.encode()).hexdigest()
+        if stored_hash == old_hash:
+            # 自动迁移到bcrypt
+            logger.info(f"检测到用户 {username} 使用旧密码格式，自动升级到bcrypt")
+            try:
+                self.update_user_password(username, password, skip_old_check=True)
+            except Exception as e:
+                logger.warning(f"密码迁移失败: {e}")
+            return user['is_active']
+        
+        return False
 
-    def update_user_password(self, username: str, new_password: str) -> bool:
-        """更新用户密码"""
+    def update_user_password(self, username: str, new_password: str, skip_old_check: bool = False) -> bool:
+        """更新用户密码（使用bcrypt加密）"""
         with self.lock:
             try:
                 cursor = self.conn.cursor()
-                password_hash = hashlib.sha256(new_password.encode()).hexdigest()
+                
+                # 使用bcrypt加密新密码
+                password_hash = pwd_context.hash(new_password)
 
-                cursor.execute('''
-                UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE username = ?
-                ''', (password_hash, username))
+                # 尝试更新password_changed_at字段（如果存在）
+                try:
+                    cursor.execute('''
+                    UPDATE users SET password_hash = ?, password_changed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+                    WHERE username = ?
+                    ''', (password_hash, username))
+                except sqlite3.OperationalError:
+                    # 字段不存在，使用旧表结构
+                    cursor.execute('''
+                    UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE username = ?
+                    ''', (password_hash, username))
 
                 if cursor.rowcount > 0:
                     self.conn.commit()
-                    logger.info(f"用户 {username} 密码更新成功")
+                    logger.info(f"✅ 用户 {username} 密码更新成功（bcrypt）")
                     return True
                 else:
                     logger.warning(f"用户 {username} 不存在，密码更新失败")
@@ -3820,6 +3944,16 @@ Cookie数量: {cookie_count}
                 logger.error(f"更新用户密码失败: {e}")
                 self.conn.rollback()
                 return False
+    
+    def needs_password_change(self, username: str) -> bool:
+        """检查用户是否需要修改密码（首次登录强制修改）"""
+        user = self.get_user_by_username(username)
+        if not user:
+            return False
+        
+        # 如果password_changed_at字段存在且为NULL，说明是首次登录
+        password_changed = user.get('password_changed_at')
+        return password_changed is None
 
     def generate_verification_code(self) -> str:
         """生成6位数字验证码"""
@@ -4092,7 +4226,10 @@ Cookie数量: {cookie_count}
             import aiohttp
 
             # 使用GET请求发送邮件
-            api_url = "https://dy.zhinianboke.com/api/emailSend"
+            api_url = os.getenv("EMAIL_API_URL", "")
+            if not api_url:
+                logger.warning("EMAIL_API_URL 未配置，跳过API方式发送邮件")
+                return False
             params = {
                 'subject': subject,
                 'receiveUser': email,
@@ -4127,12 +4264,8 @@ Cookie数量: {cookie_count}
                    is_multi_spec: bool = False, spec_name: str = None, spec_value: str = None,
                    spec_name_2: str = None, spec_value_2: str = None, user_id: int = None):
         """创建新卡券（支持双规格）"""
-        # 调试日志
-        logger.info(f"[DEBUG DB] create_card 被调用 - name: {name}")
-        logger.info(f"[DEBUG DB] is_multi_spec: {is_multi_spec}, type: {type(is_multi_spec)}")
-        logger.info(f"[DEBUG DB] spec_name: {spec_name}, spec_value: {spec_value}")
-        logger.info(f"[DEBUG DB] spec_name_2: {spec_name_2}, type: {type(spec_name_2)}")
-        logger.info(f"[DEBUG DB] spec_value_2: {spec_value_2}, type: {type(spec_value_2)}")
+        # 安全修复：将敏感调试日志改为debug级别
+        logger.debug(f"create_card called - name: {name}, is_multi_spec: {is_multi_spec}")
 
         with self.lock:
             try:
@@ -4313,12 +4446,8 @@ Cookie数量: {cookie_count}
                    spec_value: str = None, spec_name_2: str = None, spec_value_2: str = None,
                    user_id: int = None):
         """更新卡券（支持用户隔离）"""
-        # 调试日志
-        logger.info(f"[DEBUG DB] update_card 被调用 - card_id: {card_id}")
-        logger.info(f"[DEBUG DB] is_multi_spec: {is_multi_spec}, type: {type(is_multi_spec)}")
-        logger.info(f"[DEBUG DB] spec_name: {spec_name}, spec_value: {spec_value}")
-        logger.info(f"[DEBUG DB] spec_name_2: {spec_name_2}, type: {type(spec_name_2)}")
-        logger.info(f"[DEBUG DB] spec_value_2: {spec_value_2}, type: {type(spec_value_2)}")
+        # 安全修复：将敏感调试日志改为debug级别
+        logger.debug(f"update_card called - card_id: {card_id}, is_multi_spec: {is_multi_spec}")
 
         with self.lock:
             try:
@@ -4392,8 +4521,8 @@ Cookie数量: {cookie_count}
                 else:
                     sql = f"UPDATE cards SET {', '.join(update_fields)} WHERE id = ?"
 
-                logger.info(f"[DEBUG DB] 执行SQL: {sql}")
-                logger.info(f"[DEBUG DB] 参数: {params}")
+                logger.debug(f"[DEBUG DB] 执行SQL: {sql}")
+                logger.debug(f"[DEBUG DB] 参数: {params}")
                 self._execute_sql(cursor, sql, params)
 
                 if cursor.rowcount > 0:
