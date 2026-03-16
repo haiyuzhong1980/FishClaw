@@ -1073,9 +1073,9 @@ async def login(login_request: LoginRequest, request: Request):
     ip_blocked, ip_block_reason, ip_remaining = check_ip_blocked(client_ip)
     if ip_blocked:
         logger.warning(f"🚫 IP {client_ip} 尝试登录但已被封禁: {ip_block_reason}")
-        return LoginResponse(
-            success=False,
-            message=ip_block_reason
+        return JSONResponse(
+            status_code=403,
+            content={"success": False, "message": ip_block_reason}
         )
     
     # 获取登录标识（用户名或邮箱）
@@ -1088,10 +1088,9 @@ async def login(login_request: LoginRequest, request: Request):
             logger.warning(f"🔒 用户 {login_identifier} 尝试登录但账户已锁定 (IP: {client_ip})")
             # 即使锁定也要记录IP的尝试
             record_login_failure(client_ip, login_identifier)
-            return LoginResponse(
-                success=False,
-                message=user_lock_reason,
-                captcha_required=True
+            return JSONResponse(
+                status_code=403,
+                content={"success": False, "message": user_lock_reason, "captcha_required": True}
             )
     
     # 检查是否需要验证码
@@ -1167,10 +1166,9 @@ async def login(login_request: LoginRequest, request: Request):
         logger.warning(f"【{login_request.username}】登录失败：用户名或密码错误 (IP: {client_ip})")
         # 检查下次是否需要验证码
         next_captcha_required = is_captcha_required(client_ip)
-        return LoginResponse(
-            success=False,
-            message="用户名或密码错误",
-            captcha_required=next_captcha_required
+        return JSONResponse(
+            status_code=401,
+            content={"success": False, "message": "用户名或密码错误", "captcha_required": next_captcha_required}
         )
 
     elif login_request.email and login_request.password:
@@ -1218,10 +1216,9 @@ async def login(login_request: LoginRequest, request: Request):
         
         logger.warning(f"【{login_request.email}】邮箱登录失败：邮箱或密码错误 (IP: {client_ip})")
         next_captcha_required = is_captcha_required(client_ip)
-        return LoginResponse(
-            success=False,
-            message="邮箱或密码错误",
-            captcha_required=next_captcha_required
+        return JSONResponse(
+            status_code=401,
+            content={"success": False, "message": "邮箱或密码错误", "captcha_required": next_captcha_required}
         )
 
     elif login_request.email and login_request.verification_code:
@@ -1238,19 +1235,18 @@ async def login(login_request: LoginRequest, request: Request):
 
             logger.warning(f"【{login_request.email}】验证码登录失败：验证码错误或已过期 (IP: {client_ip})")
             next_captcha_required = is_captcha_required(client_ip)
-            return LoginResponse(
-                success=False,
-                message="验证码错误或已过期",
-                captcha_required=next_captcha_required
+            return JSONResponse(
+                status_code=401,
+                content={"success": False, "message": "验证码错误或已过期", "captcha_required": next_captcha_required}
             )
 
         # 获取用户信息
         user = db_manager.get_user_by_email(login_request.email)
         if not user:
             logger.warning(f"【{login_request.email}】验证码登录失败：用户不存在 (IP: {client_ip})")
-            return LoginResponse(
-                success=False,
-                message="用户不存在"
+            return JSONResponse(
+                status_code=401,
+                content={"success": False, "message": "用户不存在"}
             )
 
         # 登录成功，重置计数
@@ -5890,7 +5886,16 @@ def create_delivery_rule(rule_data: dict, current_user: Dict[str, Any] = Depends
     try:
         from db_manager import db_manager
         user_id = current_user['user_id']
+
+        # 参数校验
+        keyword = rule_data.get('keyword')
+        if not keyword or not str(keyword).strip():
+            raise HTTPException(status_code=400, detail="keyword 字段不能为空")
+        keyword = str(keyword).strip()
+
         card_id = rule_data.get('card_id')
+        if card_id is None:
+            raise HTTPException(status_code=400, detail="card_id 字段不能为空")
 
         if card_id is not None:
             card = db_manager.get_card_by_id(card_id, user_id)
@@ -5898,7 +5903,7 @@ def create_delivery_rule(rule_data: dict, current_user: Dict[str, Any] = Depends
                 raise HTTPException(status_code=404, detail="卡券不存在")
 
         rule_id = db_manager.create_delivery_rule(
-            keyword=rule_data.get('keyword'),
+            keyword=keyword,
             card_id=card_id,
             delivery_count=rule_data.get('delivery_count', 1),
             enabled=rule_data.get('enabled', True),
