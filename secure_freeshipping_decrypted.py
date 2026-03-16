@@ -21,7 +21,7 @@ class SecureFreeshipping:
         """安全转换为字符串"""
         try:
             return str(obj)
-        except:
+        except Exception:
             return "无法转换的对象"
 
     async def update_config_cookies(self):

@@ -107,7 +107,7 @@ def _migrate_database_files_early():
                         print(f"{_WARN} 发现旧{description}文件: {old_path}")
                         print(f"  新数据库位于: {new_path}")
                         print(f"  建议备份后删除旧文件")
-                except:
+                except Exception:
                     pass
     
     # 迁移备份文件

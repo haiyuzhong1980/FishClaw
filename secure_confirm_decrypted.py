@@ -41,7 +41,7 @@ class SecureConfirm:
         """安全字符串转换"""
         try:
             return str(obj)
-        except:
+        except Exception:
             return "无法转换的对象"
 
     async def _get_real_item_id(self):

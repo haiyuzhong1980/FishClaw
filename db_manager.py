@@ -253,6 +253,8 @@ class DBManager:
         """初始化数据库表结构"""
         try:
             self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            self.conn.execute("PRAGMA journal_mode=WAL")
+            self.conn.execute("PRAGMA busy_timeout=5000")  # 5秒等待锁
             cursor = self.conn.cursor()
             
             # 创建用户表
@@ -979,7 +981,7 @@ Cookie数量: {cookie_count}
                     # 如果重建失败，尝试回滚
                     try:
                         cursor.execute("DROP TABLE IF EXISTS cards_new")
-                    except:
+                    except Exception:
                         pass
             else:
                 logger.error(f"检查cards表约束时出现未知错误: {e}")
@@ -1052,7 +1054,7 @@ Cookie数量: {cookie_count}
             # 如果迁移失败，尝试清理
             try:
                 cursor.execute("DROP TABLE IF EXISTS notification_templates_new")
-            except:
+            except Exception:
                 pass
 
     def check_and_upgrade_db(self, cursor):
@@ -1738,7 +1740,7 @@ Cookie数量: {cookie_count}
             # 如果迁移失败，尝试回滚
             try:
                 cursor.execute('DROP TABLE IF EXISTS keywords_temp')
-            except:
+            except Exception:
                 pass
             raise
 
@@ -1752,6 +1754,8 @@ Cookie数量: {cookie_count}
         """获取数据库连接，如果已关闭则重新连接"""
         if self.conn is None:
             self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            self.conn.execute("PRAGMA journal_mode=WAL")
+            self.conn.execute("PRAGMA busy_timeout=5000")  # 5秒等待锁
         return self.conn
 
     def _log_sql(self, sql: str, params: tuple = None, operation: str = "EXECUTE"):
@@ -3977,11 +3981,11 @@ Cookie数量: {cookie_count}
             try:
                 # Windows系统字体
                 font = ImageFont.truetype("arial.ttf", 20)
-            except:
+            except Exception:
                 try:
                     # 备用字体
                     font = ImageFont.truetype("C:/Windows/Fonts/arial.ttf", 20)
-                except:
+                except Exception:
                     # 使用默认字体
                     font = ImageFont.load_default()
 
@@ -5894,7 +5898,8 @@ Cookie数量: {cookie_count}
                     if item_info.get('item_detail'):
                         try:
                             item_info['item_detail_parsed'] = json.loads(item_info['item_detail'])
-                        except:
+                        except Exception as e:
+                            logger.debug(f"忽略异常: {e}")
                             item_info['item_detail_parsed'] = {}
                     logger.info(f"item_info: {item_info}")
                     return item_info
@@ -6018,7 +6023,8 @@ Cookie数量: {cookie_count}
                     if item_info.get('item_detail'):
                         try:
                             item_info['item_detail_parsed'] = json.loads(item_info['item_detail'])
-                        except:
+                        except Exception as e:
+                            logger.debug(f"忽略异常: {e}")
                             item_info['item_detail_parsed'] = {}
 
                     items.append(item_info)
@@ -6053,7 +6059,8 @@ Cookie数量: {cookie_count}
                     if item_info.get('item_detail'):
                         try:
                             item_info['item_detail_parsed'] = json.loads(item_info['item_detail'])
-                        except:
+                        except Exception as e:
+                            logger.debug(f"忽略异常: {e}")
                             item_info['item_detail_parsed'] = {}
 
                     items.append(item_info)
@@ -6220,7 +6227,7 @@ Cookie数量: {cookie_count}
             logger.error(f"批量保存商品信息失败: {e}")
             try:
                 cursor.execute('ROLLBACK')
-            except:
+            except Exception:
                 pass
             return success_count
 
@@ -6287,7 +6294,7 @@ Cookie数量: {cookie_count}
             logger.error(f"批量更新商品标题和价格失败: {e}")
             try:
                 cursor.execute('ROLLBACK')
-            except:
+            except Exception:
                 pass
             return success_count
 
@@ -6365,7 +6372,7 @@ Cookie数量: {cookie_count}
             logger.error(f"批量删除商品信息失败: {e}")
             try:
                 cursor.execute('ROLLBACK')
-            except:
+            except Exception:
                 pass
             return success_count
 
@@ -7108,7 +7115,7 @@ Cookie数量: {cookie_count}
                 # 检查是否存在yifan相关字段，如果不存在则添加
                 try:
                     cursor.execute("SELECT yifan_orderno FROM orders LIMIT 1")
-                except:
+                except Exception:
                     # 字段不存在，需要添加
                     logger.info("为orders表添加亦凡回调相关字段...")
                     cursor.execute("ALTER TABLE orders ADD COLUMN yifan_orderno TEXT")
@@ -7179,7 +7186,7 @@ Cookie数量: {cookie_count}
                 try:
                     cursor.execute("SELECT yifan_orderno FROM orders LIMIT 1")
                     has_yifan_fields = True
-                except:
+                except Exception:
                     pass
                 
                 if has_yifan_fields:
@@ -7256,7 +7263,7 @@ Cookie数量: {cookie_count}
                 # 检查是否存在yifan相关字段
                 try:
                     cursor.execute("SELECT yifan_orderno FROM orders LIMIT 1")
-                except:
+                except Exception:
                     logger.warning("orders表不包含yifan_orderno字段")
                     return None
                 
@@ -7311,7 +7318,7 @@ Cookie数量: {cookie_count}
                 # 检查是否存在chat_id字段，如果不存在则添加
                 try:
                     cursor.execute("SELECT chat_id FROM orders LIMIT 1")
-                except:
+                except Exception:
                     logger.info("为orders表添加chat_id字段...")
                     cursor.execute("ALTER TABLE orders ADD COLUMN chat_id TEXT")
                     self.conn.commit()

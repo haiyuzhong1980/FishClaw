@@ -101,6 +101,30 @@ SENSITIVE_FIELD_PATTERNS = [
 ]
 
 
+def _load_persistent_blacklist():
+    """启动时从数据库加载持久化的永久黑名单"""
+    try:
+        blocked_ips_str = db_manager.get_system_setting('blocked_ips')
+        if blocked_ips_str:
+            for ip in json.loads(blocked_ips_str):
+                ip_blacklist.add(ip)
+            logger.info(f"已从数据库加载 {len(ip_blacklist)} 个永久封禁IP")
+    except Exception:
+        pass
+
+
+def _persist_blacklist():
+    """将当前永久黑名单持久化到数据库"""
+    try:
+        db_manager.set_system_setting('blocked_ips', json.dumps(list(ip_blacklist)))
+    except Exception:
+        pass
+
+
+# 启动时加载持久化黑名单
+_load_persistent_blacklist()
+
+
 def mask_sensitive_text(text: Any) -> str:
     raw_text = str(text or '')
     masked_text = raw_text
@@ -255,6 +279,7 @@ def record_login_failure(client_ip: str, username: str):
     if ip_data['attempts'] >= BRUTE_FORCE_CONFIG['auto_blacklist_threshold']:
         ip_blacklist.add(client_ip)
         logger.error(f"⛔ IP {client_ip} 登录失败{ip_data['attempts']}次，已加入永久黑名单！")
+        _persist_blacklist()
     
     # 更新用户名记录
     if username:
@@ -347,9 +372,9 @@ def generate_captcha_image(code: str) -> bytes:
         try:
             font = ImageFont.truetype(font_path, 32)
             break
-        except:
+        except Exception:
             continue
-    
+
     if font is None:
         # 使用默认字体
         font = ImageFont.load_default()
@@ -1582,6 +1607,7 @@ async def unblock_ip(ip: str, admin_user: Dict[str, Any] = Depends(verify_admin_
         ip_blacklist.discard(ip)
         unblocked = True
         logger.info(f"🔓 管理员 {admin_user['username']} 将IP {ip} 从永久黑名单中移除")
+        _persist_blacklist()
     
     if unblocked:
         return {'success': True, 'message': f'IP {ip} 已解除封禁'}
@@ -1606,6 +1632,7 @@ async def add_ip_to_blacklist(ip: str, admin_user: Dict[str, Any] = Depends(veri
     """将IP加入永久黑名单（仅管理员）"""
     ip_blacklist.add(ip)
     logger.warning(f"⛔ 管理员 {admin_user['username']} 将IP {ip} 加入永久黑名单")
+    _persist_blacklist()
     return {'success': True, 'message': f'IP {ip} 已加入永久黑名单'}
 
 
@@ -3248,7 +3275,7 @@ async def process_qr_login_cookies(cookies: str, unb: str, current_user: Dict[st
                 if existing_cookie_dict.get('unb') == unb:
                     existing_account_id = account_id
                     break
-            except:
+            except Exception:
                 continue
 
         # 确定账号ID
@@ -4057,7 +4084,7 @@ async def test_notification_template(data: TestNotificationIn, current_user: Dic
                                             success_channels.append(channel_name)
                                         else:
                                             failed_channels.append(f"{channel_name} ({resp_json.get('msg', resp_text[:50])})")
-                                    except:
+                                    except Exception:
                                         success_channels.append(channel_name)
                                 else:
                                     failed_channels.append(f"{channel_name} (HTTP {resp.status}: {resp_text[:50]})")
@@ -5565,20 +5592,17 @@ def delete_keyword_by_index(cid: str, index: int, current_user: Dict[str, Any] =
 def debug_keywords_table_info(current_user: Dict[str, Any] = Depends(get_current_user)):
     """调试：检查keywords表结构"""
     try:
-        import sqlite3
-        conn = sqlite3.connect(db_manager.db_path)
-        cursor = conn.cursor()
+        with db_manager.lock:
+            cursor = db_manager.conn.cursor()
 
-        # 获取表结构信息
-        cursor.execute("PRAGMA table_info(keywords)")
-        columns = cursor.fetchall()
+            # 获取表结构信息
+            cursor.execute("PRAGMA table_info(keywords)")
+            columns = cursor.fetchall()
 
-        # 获取数据库版本
-        cursor.execute("SELECT value FROM system_settings WHERE key = 'db_version'")
-        version_result = cursor.fetchone()
-        db_version = version_result[0] if version_result else "未知"
-
-        conn.close()
+            # 获取数据库版本
+            cursor.execute("SELECT value FROM system_settings WHERE key = 'db_version'")
+            version_result = cursor.fetchone()
+            db_version = version_result[0] if version_result else "未知"
 
         return {
             "db_version": db_version,

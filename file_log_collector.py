@@ -99,7 +99,11 @@ class FileLogCollector:
                 if os.path.exists(self.log_file):
                     # 获取文件大小
                     file_size = os.path.getsize(self.log_file)
-                    
+
+                    if file_size < self.last_position:
+                        # 文件被轮转，重置位置
+                        self.last_position = 0
+
                     if file_size > self.last_position:
                         # 读取新增内容
                         with open(self.log_file, 'r', encoding='utf-8') as f:
@@ -133,7 +137,7 @@ class FileLogCollector:
                 # 转换时间格式
                 try:
                     timestamp = datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S.%f')
-                except:
+                except Exception:
                     timestamp = datetime.now()
                 
                 log_entry = {

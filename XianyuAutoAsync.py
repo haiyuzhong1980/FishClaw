@@ -18,7 +18,6 @@ from config import (
     LOG_CONFIG, AUTO_REPLY, DEFAULT_HEADERS, WEBSOCKET_HEADERS,
     APP_CONFIG, API_ENDPOINTS
 )
-# from app.logging_config import setup_logging  # 已移除，模块不存在
 import sys
 import aiohttp
 from collections import defaultdict

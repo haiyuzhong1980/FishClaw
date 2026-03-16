@@ -19,12 +19,17 @@ from db_manager import db_manager
 
 class AIReplyEngine:
     """AI回复引擎 - 统一意图识别与回复生成"""
-    
+
+    _LOCK_EXPIRE_SECONDS = 3600  # 聊天锁过期时间：1小时
+
     def __init__(self):
         self._init_default_prompts()
         # 用于控制同一chat_id消息的串行处理
-        self._chat_locks = {}
+        self._chat_locks: Dict[str, threading.Lock] = {}
+        self._chat_lock_timestamps: Dict[str, float] = {}  # 记录最后使用时间
         self._chat_locks_lock = threading.Lock()
+        # 复用 HTTP 连接池，避免每次请求重建连接
+        self._http_session = requests.Session()
     
     def _init_default_prompts(self):
         """初始化默认提示词（用于构建统一提示词）"""
@@ -153,7 +158,7 @@ class AIReplyEngine:
         logger.info(f"发送的prompt: {prompt[:100]}...") # 避免 prompt 过长
         logger.debug(f"请求数据: {json.dumps(data, ensure_ascii=False)}")
 
-        response = requests.post(url, headers=headers, json=data, timeout=30)
+        response = self._http_session.post(url, headers=headers, json=data, timeout=60)
 
         if response.status_code != 200:
             logger.error(f"DashScope API请求失败: {response.status_code} - {response.text}")
@@ -217,10 +222,11 @@ class AIReplyEngine:
                 "parts": [{"text": system_instruction}]
             }
 
-        logger.info(f"Calling Gemini REST API: {url.split('?')[0]}")
+        masked_key = api_key[:4] + "****" if api_key else "****"
+        logger.info(f"Calling Gemini REST API: {url.split('?')[0]} (key={masked_key})")
         logger.debug(f"Gemini Payload: {json.dumps(payload, ensure_ascii=False)}")
-        
-        response = requests.post(url, headers=headers, json=payload, timeout=30)
+
+        response = self._http_session.post(url, headers=headers, json=payload, timeout=60)
 
         if response.status_code != 200:
             logger.error(f"Gemini API 请求失败: {response.status_code} - {response.text}")
@@ -256,7 +262,7 @@ class AIReplyEngine:
         }
 
         logger.info(f"OpenAI Chat API请求: {url}")
-        response = requests.post(url, headers=headers, json=data, timeout=30)
+        response = self._http_session.post(url, headers=headers, json=data, timeout=60)
 
         if response.status_code != 200:
             logger.error(f"OpenAI Chat API请求失败: {response.status_code} - {response.text}")
@@ -284,7 +290,7 @@ class AIReplyEngine:
         }
 
         logger.info(f"OpenAI Responses API请求: {url}")
-        response = requests.post(url, headers=headers, json=data, timeout=30)
+        response = self._http_session.post(url, headers=headers, json=data, timeout=60)
 
         if response.status_code != 200:
             logger.error(f"OpenAI Responses API请求失败: {response.status_code} - {response.text}")
@@ -335,7 +341,7 @@ class AIReplyEngine:
             data["system"] = system_content
 
         logger.info(f"Anthropic API请求: {url}")
-        response = requests.post(url, headers=headers, json=data, timeout=30)
+        response = self._http_session.post(url, headers=headers, json=data, timeout=60)
 
         if response.status_code != 200:
             logger.error(f"Anthropic API请求失败: {response.status_code} - {response.text}")
@@ -369,7 +375,7 @@ class AIReplyEngine:
         }
 
         logger.info(f"Azure OpenAI API请求: {url.split('?')[0]}")
-        response = requests.post(url, headers=headers, json=data, timeout=30)
+        response = self._http_session.post(url, headers=headers, json=data, timeout=60)
 
         if response.status_code != 200:
             logger.error(f"Azure OpenAI API请求失败: {response.status_code} - {response.text}")
@@ -383,11 +389,28 @@ class AIReplyEngine:
         settings = db_manager.get_ai_reply_settings(cookie_id)
         return settings['ai_enabled']
     
+    def _cleanup_expired_locks(self) -> None:
+        """清理过期的聊天锁（须在 _chat_locks_lock 持有期间调用）"""
+        now = time.time()
+        expired = [
+            k for k, t in self._chat_lock_timestamps.items()
+            if now - t > self._LOCK_EXPIRE_SECONDS
+        ]
+        for k in expired:
+            self._chat_locks.pop(k, None)
+            self._chat_lock_timestamps.pop(k, None)
+        if expired:
+            logger.debug(f"已清理 {len(expired)} 个过期聊天锁")
+
     def _get_chat_lock(self, chat_id: str) -> threading.Lock:
-        """获取指定chat_id的锁，如果不存在则创建"""
+        """获取指定chat_id的锁，如果不存在则创建，并更新时间戳"""
         with self._chat_locks_lock:
+            # 每当锁字典超过100项时触发一次清理
+            if len(self._chat_lock_timestamps) > 100:
+                self._cleanup_expired_locks()
             if chat_id not in self._chat_locks:
                 self._chat_locks[chat_id] = threading.Lock()
+            self._chat_lock_timestamps[chat_id] = time.time()
             return self._chat_locks[chat_id]
     
     def generate_reply(self, message: str, item_info: dict, chat_id: str,
@@ -408,8 +431,8 @@ class AIReplyEngine:
             
             # 消息去抖处理
             if not skip_wait:
-                logger.info(f"【{cookie_id}】消息已保存，等待10秒收集后续消息: {message[:20]}...")
-                time.sleep(10)
+                logger.info(f"【{cookie_id}】消息已保存，等待1秒收集后续消息: {message[:20]}...")
+                time.sleep(1)
             else:
                 logger.info(f"【{cookie_id}】消息已保存（外部防抖已启用）: {message[:20]}...")
             
